@@ -1,4 +1,3 @@
-install.packages("zoo")
 
 library(tidyverse)
 
@@ -9,14 +8,25 @@ library(scales)
 library(ggrepel)
 library(ggnewscale)
 library(geomtextpath)
+library(patchwork)
 
 library(shiny)
 library(shinyWidgets)
 library(shinydashboard)
+library(shinythemes)
+library(reactable)
+library(plotly)
 
 library(snotelr)
 library(openmeteo)
 
+library(maps)
+library(sf)
+
+library(climaemet)
+
+
+options(scipen = 999)
 
 #sn_daily_function
 sn_daily_function <- function(site_id){
@@ -39,12 +49,12 @@ snotel_columns <- c(
   "snow_depth"
 )
 
-sn_hourly_function <- function(site_id, days){
+sn_hourly_function <- function(site_id, state, days){
   
   base_url <- paste0(
     "https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customMultiTimeSeriesGroupByStationReport/hourly/start_of_period/",
     site_id, ":",
-    "id", ":",
+    state, ":",
     "sntl",
     "%7Cid=\"\"%7Cname/-",
     round(days*24,0),
@@ -85,19 +95,19 @@ imp_function_old <- function(df){
       .default = value / 25.4))
 }
 
-imp_function <- function(df){
+metric_to_imperial_function <- function(df){
   df %>%
-    mutate(across(starts_with("snow") | starts_with("temp"), ~ case_when(
-      str_starts(cur_column(), "temp") ~ (.x * 9/5) + 32,
-      .default = .x / 25.4)))
+    mutate(across(matches("snow"), ~ . / 25.4)) %>%
+    mutate(across(matches("precip|temperature"), ~ (. * 9/5) + 32)) %>%
+    mutate(across(matches("wind_speed|wind_gust"), ~ . / 1.60934))
+  
 }
 
-imp_to_metric_function <- function(df) {
+imperial_to_metric_function <- function(df) {
   df %>%
-    mutate(across(starts_with("snow") | starts_with("temp"), ~ case_when(
-      str_starts(cur_column(), "temp") ~ (.x - 32) * 5/9, # Fahrenheit to Celsius
-      TRUE ~ .x * 25.4 # Inches to cm/mm
-    )))
+    mutate(across(matches("snow"), ~ . * 25.4)) %>% 
+    mutate(across(matches("precip|temperature"), ~ (. - 32) * 5/9)) %>%
+    mutate(across(matches("wind_speed|wind_gust"), ~ . * 1.60934))
 }
 
 generate_acronym <- function(name) {
@@ -108,12 +118,28 @@ generate_acronym <- function(name) {
 flag_function <- function(df){
   df %>%
     mutate(flag_snow_change = case_when(
-      snow_change_vs_lag01 >= 200 | snow_change_vs_lag03 >= 400 ~ 2,
-      snow_change_vs_lag01 >= 100 | snow_change_vs_lag03 >= 200 ~ 1,
+      snow_change_vs_lag_1day >= 8 | snow_change_vs_lag_3day >= 16 ~ 2,
+      snow_change_vs_lag_1day >= 4 | snow_change_vs_lag_3day >= 8 ~ 1,
       .default = 0)) %>%
     mutate(flag_temp = case_when(
-      temperature_max > 1.65 & snow_depth / 25.4 > 10 ~ 3,
-      temperature_max > 0.65 & snow_depth / 25.4 > 10 ~ 2,
-      temperature_max > 0 & snow_depth / 25.4 > 10 ~ 1,
-      .default = 0)) 
+      temperature_max > 36 & snow_depth > 10 ~ 3,
+      temperature_max > 33 & snow_depth > 10 ~ 2,
+      temperature_max > 32 & snow_depth > 10 ~ 1,
+      .default = 0))
+}
+
+
+
+flag_label_function <- function(df){
+  df %>%
+    mutate(label_snow_change = str_c(
+      if(length(input$site_name) > 1){str_c(site_ac, ": ")}, 
+      "Snow: ",
+      round(snow_change_vs_lag_1day), ifelse(input$units == "imperial", "in", "mm"), "(1day)\n",
+      round(snow_change_vs_lag_3day), ifelse(input$units == "imperial", "in", "mm"), "(3day)")
+    ) %>%
+    mutate(label_temp_flag = str_c(
+      if(length(input$site_name) > 1){str_c(site_ac, ": ")}, 
+      round(temperature_max), ifelse(input$units == "imperial", "F", "C"))
+    )
 }
