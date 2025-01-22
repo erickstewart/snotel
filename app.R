@@ -1,27 +1,83 @@
-#source ####
+#libraries #####
 library(here)
+
+library(tidyverse)
+
+library(zoo)
+
+library(scales)
+
+library(ggrepel)
+library(ggnewscale)
+library(geomtextpath)
+library(patchwork)
+
+library(shiny)
+library(shinyWidgets)
+library(shinydashboard)
+library(shinythemes)
+library(reactable)
+library(plotly)
+
+library(snotelr)
+library(openmeteo)
+
+library(maps)
+library(sf)
+
+library(climaemet)
+
+#source ####
 
 source(here("scripts", "utils.R"))
 source(here("scripts", "data.R"))
 
+#shiny dates ####
+dates_seasons <- daily %>%
+  select(date) %>%
+  distinct() %>%
+  mutate(
+    month_day = str_sub(as.character(date), 6, 10),
+    month = month(date),
+    year = as.character(year(date))
+  ) %>%
+  mutate(season = case_when(
+    month %in% c(9:12) ~ str_c(year, "_", as.character(as.numeric(year) + 1)),
+    .default = str_c(as.character(as.numeric(year) -1), "_", year)
+  )) %>%
+  mutate(date_order = case_when(
+    month %in% c(9:12) ~ 1,
+    .default = 2
+  ))
+
+dates_month_day <- dates_seasons %>%
+  select(month_day, date_order) %>%
+  distinct() %>%
+  arrange(date_order, month_day)
+
+
 #shiny text ####
+text_labels <- "Blue labels: snow; day-over-day change in snow depth
+Red labels: high temps; orange > 32F; orangered > 33F; red > 36F"
+
 text_sn_daily <- "Select Snotel site(s), Snotel variables, and Snotel date range 
-Storm labels: Dark blue = big storm; Light blue = med/small storm
-Temp labels: Reds = High temps (max daily)
+Blue labels: snow; day-over-day change in snow depth
+Red labels: high temps; orange > 32F; orangered > 33F; red > 36F
 "
-text_sn_hourly <- "- Select Snotel site(s), Snotel variables, and Snotel date range. 
-- Storm labels: Dark blue = big storm; Light blue = med/small storm
-- Temp labels: Reds = High temps
-"
-
-text_wf <- "- Select Snotel and/or other sites, Weather variables, and Weather date range"
-
-text_doc1 <- "Purpose of this app is to provide me (and perhaps others) a one-stop shop for snotel and weather data
-Scope is the Boise area backcountry skiing region
+text_sn_hourly <- "Select Snotel site(s), Snotel variables, and Snotel date range. 
+Blue labels: snow; day-over-day change in snow depth
+Red labels: high temps; orange > 32F; orangered > 33F; red > 36F
 "
 
-text_doc2 <- "- Available sites are shown in the meta table tab. There are snotel and non-snotel sites
-- Daily snotel data is pulled from 2024-01-01 on
+text_wf <- "Select Snotel and/or other sites, Weather variables, and Weather date range"
+
+
+text_doc1 <- "The purpose of this app is to provide me (and perhaps others) a one-stop shop for snotel and weather data.
+The current scope is the Boise area backcountry skiing region (roughly defined).
+"
+
+text_doc2 <- "- Available sites are shown in the Meta and Map tabs. There are Snotel and non-snotel sites.
+- Daily snotel data is available for the last 10 years
 - Hourly snotel is pulled for last 14 days
 - Weather data is pulled from previous 14 and out 7 days
 "
@@ -48,172 +104,37 @@ shiny_vars <- tibble(var = c(
   mutate(var_order = row_number())
 
 
-#theme
+#theme ####
 theme_sn <- theme(
   plot.title = element_text(size = 14, face = "bold"),
   plot.subtitle = element_text(size = 13),
   legend.position = "right",
   legend.text = element_text(size = 13),
   strip.text = element_text(size = 13, face = "bold"),
-  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 11),
+  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 8),
   panel.grid.minor.x = element_blank()
 )
 
-# #ui ####
-# 
-# ui <- dashboardPage(
-#   dashboardHeader(title = "Boise Backcountry Skiing App"),
-#   
-#   dashboardSidebar(
-#     sidebarMenu(
-#       menuItem("Snotel Daily", tabName = "daily_data", icon = icon("calendar")),
-#       menuItem("Snotel Hourly", tabName = "hourly_data", icon = icon("clock")),
-#       menuItem("Weather Forecast", tabName = "weather_data", icon = icon("cloud")),
-#       menuItem("Wind Direction", tabName = "wind_dir", icon = icon("cloud")),
-#       menuItem("Meta Table", tabName = "meta_table", icon = icon("table")),
-#       menuItem("Map of ID/OR", tabName = "map_idaho", icon = icon("map")),
-#       menuItem("Documentation", tabName = "documentation", icon = icon("book")),
-#       
-#       
-#       selectInput("units", "Units:", 
-#                   choices = c("imperial", "metric"), 
-#                   selected = "imperial"
-#       ),
-#       
-#       pickerInput("site_label", "Select Site Name (multiple):", 
-#                   choices = unique(bbs_meta$site_label),
-#                   selected = "Mores Creek Summit",
-#                   options = list(
-#                     `actions-box` = TRUE,
-#                     `live-search` = TRUE,
-#                     size = 10
-#                   ),
-#                   multiple = TRUE
-#       ),
-#       
-#       pickerInput("sn_var", "Select Snotel Var (multiple):", 
-#                   choices = shiny_vars$var,
-#                   selected = "snow_depth",
-#                   options = list(
-#                     `actions-box` = TRUE,
-#                     `live-search` = TRUE,
-#                     size = 10
-#                   ),
-#                   multiple = TRUE
-#       ),
-#       
-#       pickerInput("wf_var", "Select Weather Forecast Var(s):", 
-#                   choices = c(
-#                     "snowfall", "snowfall_rolling_6h_sum",
-#                     "precipitation",
-#                     "temperature",                                      
-#                     "wind_speed", "wind_gusts"
-#                     ),
-#                   selected = c("snowfall_rolling_6h_sum", "temperature"),
-#                   options = list(
-#                     `actions-box` = TRUE,
-#                     `live-search` = TRUE,
-#                     size = 10
-#                   ),
-#                   multiple = TRUE
-#       ),
-#       
-#       sliderInput(
-#         inputId = "date_range1",
-#         label = "Snotel Date Range:",
-#         min = min(daily$date),
-#         max = max(daily$date),
-#         value = c(max(daily$date)-21, max(daily$date))
-#       ),
-#       sliderInput(
-#         inputId = "date_range2",
-#         label = "Weather Forecast Date Range:",
-#         min = as.Date(min(wf$date)),
-#         max = as.Date(max(wf$date)),
-#         value = c(Sys.Date() - 3, as.Date(max(wf$date)))
-#       )
-#     )
-#   ),
-#   
-#   dashboardBody(
-#     tabItems(
-#       tabItem(tabName = "daily_data",
-#               #h2("Snotel Daily"),
-#               textAreaInput("doc_sn_daily", "Snotel Daily - Notes:", 
-#                             placeholder = text_sn_daily, 
-#                             width = "100%", height = "70px"),
-#               plotOutput("dailyPlot", height = "600px")
-#       ),
-#       
-#       tabItem(tabName = "hourly_data",
-#               textAreaInput("doc_sn_hourly", "Snotel Hourly - Notes:", 
-#                             placeholder = text_sn_hourly, 
-#                             width = "100%", height = "70px"),
-#               plotOutput("hourlyPlot", height = "600px")
-#       ),
-#       
-#       tabItem(tabName = "weather_data",
-#               #h2("Weather Forecast"),
-#               textAreaInput("doc_wf", "Weather Forecast - Notes:", 
-#                             placeholder = text_wf, 
-#                             width = "100%", height = "70px"),
-#               plotOutput("wfPlot", height = "600px")
-#       ),
-#       
-#       tabItem(tabName = "wind_dir",
-#               #h2("Wind Direction"),
-#               plotOutput("windrose", height = "650px")
-#       ),
-#       
-#       tabItem(tabName = "meta_table",
-#               #h2("Site Meta Table"),
-#               reactableOutput("metaTable")
-#       ),
-#       
-#       tabItem(tabName = "map_idaho",
-#               #h2("Map of Idaho & Oregon"),
-#               plotOutput("idahoMap", height = "650px")
-#       ),
-#       
-# 
-#       tabItem(tabName = "documentation",
-#               h2("Documentation"),
-#               textAreaInput("doc_1", "Section 1:", 
-#                             placeholder = text_doc1, 
-#                             width = "100%", height = "150px"),  
-#               textAreaInput("doc_2", "Section 2:", 
-#                             placeholder = text_doc2, 
-#                             width = "100%", height = "150px"),  
-#               textAreaInput("doc_3", "Section 3:", 
-#                             placeholder = text_doc3, 
-#                             width = "100%", height = "150px"),  
-#               textAreaInput("doc_4", "Section 4:", 
-#                             placeholder = text_doc4, 
-#                             width = "100%", height = "150px")  
-#       )
-#       
-#     )
-#   )
-# )
-# 
+#shiny colors ####
+colors_sites <- c(
+  "navyblue", "springgreen4", "khaki4", "grey20", "purple3", "gray70", 
+  "royalblue", "springgreen1", "khaki1", "grey40", "purple1",  "black"
+)
 #ui mobile ####
-library(shiny)
-library(shinyWidgets)
-library(reactable)
-library(shinythemes)
-library(shinydashboard)
-
 ui <- fluidPage(
-  titlePanel("Boise Backcountry Skiing App"),
+  
+  
+  #titlePanel("Boise Backcountry Skiing App"),
   theme = shinythemes::shinytheme("flatly"),
   
   sidebarLayout( # Use sidebarLayout for a true sidebar
     sidebarPanel( # All inputs go in sidebarPanel
       width = 3, # Set the width of the sidebar
+      #h2("Boise Backcountry Skiing App"),
+      tags$h4(style = "color: white; font-size: 20px; font-weight: bold; background-color: #2c3e50; padding: 5px;", "Boise Backcountry Skiing App"),
       selectInput("units", "Units:",
                   choices = c("imperial", "metric"),
                   selected = "imperial"),
-      
       pickerInput("site_label", "Select Site Name (multiple):",
                   choices = unique(bbs_meta$site_label),
                   selected = "Mores Creek Summit",
@@ -234,12 +155,12 @@ ui <- fluidPage(
                   ),
                   multiple = TRUE),
       
-      pickerInput("wf_var", "Select Weather Forecast Var(s):",
+      pickerInput("wf_var", "Select Weather Var(s):",
                   choices = c(
-                    "snowfall", "snowfall_rolling_6h_sum",
+                    "snowfall", "snowfall_rolling_12h_sum",
                     "precipitation", "temperature",
                     "wind_speed", "wind_gusts"),
-                  selected = c("snowfall_rolling_6h_sum", "temperature"),
+                  selected = c("snowfall_rolling_12h_sum", "temperature"),
                   options = list(
                     `actions-box` = TRUE,
                     `live-search` = TRUE,
@@ -247,43 +168,72 @@ ui <- fluidPage(
                   ),
                   multiple = TRUE),
       
-      sliderInput(
+      dateRangeInput(
         inputId = "date_range1",
         label = "Snotel Date Range:",
+        start = max(daily$date)-21,
+        end = max(daily$date),
         min = min(daily$date),
         max = max(daily$date),
-        value = c(max(daily$date)-21, max(daily$date))
+        startview = "year"
+        #value = c(max(daily$date)-21, max(daily$date))
       ),
       
       sliderInput(
         inputId = "date_range2",
-        label = "Weather Forecast Date Range:",
+        label = "Weather Date Range:",
         min = as.Date(min(wf$date)),
         max = as.Date(max(wf$date)),
         value = c(Sys.Date() - 3, as.Date(max(wf$date)))
+      ),
+      
+      
+      pickerInput(
+        inputId = "seasons",
+        label = "Select Seasons to Compare Snotel:",
+        choices = sort(unique(dates_seasons$season), decreasing = T),
+        selected = tail(sort(unique(dates_seasons$season)), 2),
+        options = list(
+          `actions-box` = TRUE,
+          #`live-search` = TRUE,
+          size = 10
+        ),
+        multiple = TRUE
       )
+      #, colorSelectorInput("color1", "Select Color 1", choices = "red")
+      
     ),
+    
     
     mainPanel( # Tabs and content go in mainPanel
       width = 9, # Set the width of the main panel
       navbarPage(
         title = "",
         tabPanel("Snotel Daily",
-                 plotOutput("dailyPlot", height = "600px")
+                 plotlyOutput("dailyPlot", height = "600px"),
+                 textAreaInput("doc_sn_daily", "Snotel Labels:",
+                               placeholder = text_labels, 
+                               width = "100%", height = "60px")
         ),
         tabPanel("Snotel Hourly",
-                 plotOutput("hourlyPlot", height = "600px")
+                 plotlyOutput("hourlyPlot", height = "600px"),
+                 textAreaInput("doc_sn_hourly", "Snotel Labels:",
+                               placeholder = text_labels, 
+                               width = "100%", height = "60px")
         ),
-        tabPanel("Weather Forecast",
-                 plotOutput("wfPlot", height = "600px")
+        tabPanel("Weather",
+                 plotlyOutput("wfPlot", height = "650px")
         ),
-        tabPanel("Wind Direction",
+        tabPanel("Wind",
                  plotOutput("windrose", height = "650px")
         ),
-        tabPanel("Meta Table",
+        tabPanel("Snotel Prior Seasons",
+                 plotlyOutput("seasonsPlot", height = "600px")
+        ),
+        tabPanel("Meta Data",
                  reactableOutput("metaTable")
         ),
-        tabPanel("Map of ID/OR",
+        tabPanel("Map",
                  plotOutput("idahoMap", height = "650px")
         ),
         tabPanel("Directions",
@@ -294,7 +244,7 @@ ui <- fluidPage(
                  textAreaInput("doc_sn_hourly", "Snotel Hourly:",
                                placeholder = text_sn_hourly,
                                width = "100%", height = "150px"),
-                 textAreaInput("doc_wf", "Weather Forecasts:",
+                 textAreaInput("doc_wf", "Weather Data:",
                                placeholder = text_wf,
                                width = "100%", height = "150px"),
         ),
@@ -325,10 +275,11 @@ server <- function(input, output, session) {
   
   
   # Reactive data frames
+  
   r_daily <- reactive({
     daily %>% 
       left_join(bbs_meta %>% 
-                  select(site_id, site_name, site_label, site_ac, site_order),
+                  select(site_id, site_name, site_name_f, site_label, site_ac, site_order),
                 by = "site_id") %>% 
       filter(site_label %in% input$site_label) %>%
       group_by(site_id) %>%
@@ -342,8 +293,9 @@ server <- function(input, output, session) {
       {if(input$units == "metric") imperial_to_metric_function(.) else . } %>%
       mutate(label_snow_change = str_c(
         if(length(input$site_name) > 1){str_c(site_ac, ": ")}, 
-        round(snow_change_vs_lag_1day), ifelse(input$units == "imperial", "in", "mm"), "(1day); ",
-        round(snow_change_vs_lag_3day), ifelse(input$units == "imperial", "in", "mm"), "(3day)")
+        "Snow: ",
+        round(snow_change_vs_lag_1day), ifelse(input$units == "imperial", "in", "mm"), "(1day)")
+        #round(snow_change_vs_lag_3day), ifelse(input$units == "imperial", "in", "mm"), "(3day)")
       ) %>%
       mutate(label_temp_flag = str_c(
         if(length(input$site_name) > 1){str_c(site_ac, ": ")}, 
@@ -352,7 +304,6 @@ server <- function(input, output, session) {
       pivot_longer(c(starts_with("snow") | starts_with("temp") | starts_with("precip")), 
                    names_to = "var", values_to = "value") %>%
       filter(str_detect(var, paste(input$sn_var, collapse = "|"))) %>%
-      filter(var != "temperature_mean") %>%
       filter(date >= input$date_range1[1] & date <= input$date_range1[2]) %>%
       left_join(shiny_vars) %>%
       mutate(var_units = case_when(
@@ -362,13 +313,15 @@ server <- function(input, output, session) {
         input$units == "metric" ~ "C",
         .default = "other"
       )) %>%
-      mutate(var_units = str_c(var, " (", var_units, ")"))
+      mutate(var_units = str_c(var, " (", var_units, ")")) %>%
+      filter(var != "temperature_mean") 
+    
   })
   
   r_hourly <- reactive({
     hourly %>% 
       left_join(bbs_meta %>% 
-                  select(site_id, site_name, site_label, site_ac, site_order),
+                  select(site_id, site_name, site_name_f, site_label, site_ac, site_order),
                 by = "site_id") %>% 
       filter(site_label %in% input$site_label) %>%
       group_by(site_id) %>%
@@ -392,8 +345,8 @@ server <- function(input, output, session) {
       {if(input$units == "metric") imperial_to_metric_function(.) else . } %>%
       mutate(label_snow_change = str_c(
         if(length(input$site_name) > 1){str_c(site_ac, ": ")}, 
-        round(snow_change_vs_lag_1day), ifelse(input$units == "imperial", "in", "mm"), "(1day); ",
-        round(snow_change_vs_lag_3day), ifelse(input$units == "imperial", "in", "mm"), "(3day)")
+        round(snow_change_vs_lag_1day), ifelse(input$units == "imperial", "in", "mm"), "(1day)")
+        #round(snow_change_vs_lag_3day), ifelse(input$units == "imperial", "in", "mm"), "(3day)")
       ) %>%
       mutate(label_temp_flag = str_c(
         if(length(input$site_name) > 1){str_c(site_ac, ": ")}, 
@@ -402,7 +355,6 @@ server <- function(input, output, session) {
       pivot_longer(c(starts_with("snow") | starts_with("temp") | starts_with("precip")), 
                    names_to = "var", values_to = "value") %>%
       filter(str_detect(var, paste(input$sn_var, collapse = "|"))) %>%
-      filter(var != "temperature_mean") %>%
       filter(date >= input$date_range1[1] & date <= input$date_range1[2]) %>%
       left_join(shiny_vars) %>%
       mutate(units = case_when(
@@ -419,7 +371,9 @@ server <- function(input, output, session) {
         input$units == "metric" ~ "degrees (C)",
         .default = "other"
       )) %>%
-      mutate(var_units = str_c(var, " (", var_units, ")"))
+      mutate(var_units = str_c(var, " (", var_units, ")")) %>%
+      filter(var != "temperature_mean")
+    
     
     
   })
@@ -428,7 +382,7 @@ server <- function(input, output, session) {
   r_wf <- reactive({
     wf %>% 
       left_join(bbs_meta %>% 
-                  select(site_id, site_name, site_label, site_ac, site_order),
+                  select(site_id, site_name, site_name_f, site_label, site_ac, site_order),
                 by = "site_name") %>% 
       filter(site_label %in% input$site_label) %>%
       {if(input$units == "metric") imperial_to_metric_function(.) else . } %>%
@@ -446,9 +400,225 @@ server <- function(input, output, session) {
         .default = "other"
       )) %>%
       mutate(var_units = str_c(var, " (", var_units, ")"))
+  })
+  
+  
+  
+  r_seasons <- reactive({
+    daily %>% 
+      left_join(bbs_meta %>% 
+                  select(site_id, site_name, site_name_f, site_label, site_ac, site_order),
+                by = "site_id") %>% 
+      filter(site_label %in% input$site_label) %>%
+      {if(input$units == "metric") imperial_to_metric_function(.) else . } %>%
+      pivot_longer(c(starts_with("snow") | starts_with("temp") | starts_with("precip")), 
+                   names_to = "var", values_to = "value") %>%
+      filter(str_detect(var, paste(input$sn_var, collapse = "|"))) %>%
+      left_join(dates_seasons) %>%
+      filter(season %in% as.character(input$seasons)) %>%
+      left_join(shiny_vars) %>%
+      mutate(var_units = case_when(
+        str_detect(var, "snow|precip") & input$units == "imperial" ~ "inches",
+        str_detect(var, "snow|precip") & input$units == "metric" ~ "mm",
+        input$units == "imperial" ~ "F",
+        input$units == "metric" ~ "C",
+        .default = "other"
+      )) %>%
+      mutate(var_units = str_c(var, " (", var_units, ")"))
+  })
+  
+  
+  
+  # Daily plot
+  output$dailyPlot <- renderPlotly({
     
+    r_daily() %>%
+      filter(var != "temperature_mean") %>%
+      ggplot(aes(x = date, y = value,
+                 group = site_name_f,
+                 color = site_name_f
+      )) +
+      {if(any(str_detect(input$var_sn, "lag"))) list(
+        geom_line(
+          data = . %>% filter(str_detect(var, "lag")) %>%
+            mutate(temp_line = 0),
+          aes(y = temp_line, group = 1),
+          color = "gold",
+          alpha = 1,
+          linetype = "dashed"
+        )
+      )
+      } +
+      geom_ribbon(
+        data = . %>% filter(str_detect(var, "temperature_min") & !is.na(value)),
+        aes(ymin = if(input$units == "imperial"){min(0, min(value))} else {min(-17.8, min(value))},
+            ymax = if(input$units == "imperial"){5} else {-15}),
+        fill = "steelblue", color = NA,
+        alpha = 0.2,
+        show.legend = F
+      ) +
+      geom_ribbon(
+        data = . %>% filter(str_detect(var, "temperature_max") & !is.na(value)),
+        aes(ymin = if(input$units == "imperial"){32} else {0}, 
+            ymax = if(input$units == "imperial"){max(40, max(value))} else {max(4.5, max(value))}),
+        fill = "red", color = NA,
+        alpha = 0.2,
+        show.legend = F
+      ) +
+      geom_point(data = .  %>% filter(flag_temp == 1),
+                 color = "orange", size = 2, show.legend = F) +
+      geom_point(data = .  %>% filter(flag_temp == 2),
+                 color = "orangered", size = 2, show.legend = F) +
+      geom_point(data = .  %>% filter(flag_temp == 3),
+                 color = "red", size = 2, show.legend = F) +
+      geom_line() +
+      geom_point(size = 1) +
+      scale_color_manual(values = colors_sites) +
+      geom_text(data = . %>% filter(!is.na(date)) %>% filter(date == max(date), .by = var),
+                aes(y = value * 1.005, label = site_ac) 
+                #hjust = 0.5, vjust = 0.5
+      ) +
+      geom_text(data = .  %>% filter(flag_temp == 1 & !str_detect(var, "min|mean")),
+                aes(label = label_temp_flag), 
+                color = "orange", size = 3, nudge_y = -0.5, show.legend = F) +
+      geom_text(data = .  %>% filter(flag_temp == 2 & !str_detect(var, "min|mean")),
+                aes(label = label_temp_flag), 
+                color = "orangered", size = 3, nudge_y = -0.5, show.legend = F) +
+      geom_text(data = .  %>% filter(flag_temp == 3 & !str_detect(var, "min|mean")),
+                aes(label = label_temp_flag), 
+                color = "red", size = 3, nudge_y = -0.5, show.legend = F) +
+      geom_text(data = .  %>% filter(flag_snow_change != 0),
+                aes(label = label_snow_change),
+                color = "deepskyblue", size = 3, nudge_y = 0.5, angle = 45, show.legend = F) +
+      scale_y_continuous(breaks = function(x) unique(floor(pretty_breaks(n = 10)(x)))) +
+      facet_wrap(~reorder(var_units, var_order), scales = "free_y", 
+                 ncol = if(length(unique(r_daily()$var)) <= 3){1} else {2}
+      ) +
+      guides(alpha = "none") +
+      labs(#title = "Snotel - Daily Data", 
+        #subtitle = "Storm labels: Dark blue = big storm; Light blue = med/small storm\nTemp labels: Reds = High temps (max daily)",
+        x = NULL, 
+        y = NULL,
+        color = "Snotel Site") +
+      scale_x_date(date_breaks = "1 day", # Show every day
+                   date_labels = "%Y-%m-%d") + 
+      theme_bw() +
+      theme_sn
     
   })
+  
+  # Hourly plot
+  output$hourlyPlot <- renderPlotly({
+    
+    r_hourly() %>%
+      filter(var != "temperature_mean") %>%
+      ggplot(aes(x = date, y = value,
+                 group = site_name_f,
+                 color = site_name_f
+      )) +
+      {if(any(str_detect(input$var_sn, "lag"))) list(
+        geom_line(
+          data = . %>% filter(str_detect(var, "lag")) %>%
+            mutate(temp_line = 0),
+          aes(y = temp_line, group = 1),
+          color = "gold",
+          alpha = 1,
+          linetype = "dashed"
+        )
+      )
+      } +
+      geom_ribbon(
+        data = . %>% filter(str_detect(var, "temperature_min") & !is.na(value)),
+        aes(ymin = if(input$units == "imperial"){min(0, min(value))} else {min(-17.8, min(value))},
+            ymax = if(input$units == "imperial"){5} else {-15}),
+        fill = "steelblue", color = NA,
+        alpha = 0.2,
+        show.legend = F
+      ) +
+      geom_ribbon(
+        data = . %>% filter(str_detect(var, "temperature_max") & !is.na(value)),
+        aes(ymin = if(input$units == "imperial"){32} else {0}, 
+            ymax = if(input$units == "imperial"){max(40, max(value))} else {max(4.5, max(value))}),
+        fill = "red", color = NA,
+        alpha = 0.2,
+        show.legend = F
+      ) +
+      geom_point(data = .  %>% filter(flag_temp == 1),
+                 color = "orange", size = 2, show.legend = F) +
+      geom_point(data = .  %>% filter(flag_temp == 2),
+                 color = "orangered", size = 2, show.legend = F) +
+      geom_point(data = .  %>% filter(flag_temp == 3),
+                 color = "red", size = 2, show.legend = F) +
+      geom_line() +
+      scale_color_manual(values = colors_sites) +
+      geom_text(data = . %>% filter(!is.na(date)) %>% filter(date == max(date), .by = var),
+                aes(y = value * 1.005, label = site_ac) 
+                #hjust = 0.5, vjust = 0.5
+      ) +
+      geom_text(data = .  %>% filter(flag_snow_change != 0),
+                aes(label = label_snow_change),
+                color = "deepskyblue", size = 3, nudge_y = 0.5, angle = 45, show.legend = F) +
+      scale_y_continuous(breaks = function(x) unique(floor(pretty_breaks(n = 10)(x)))) +
+      facet_wrap(~reorder(var_units, var_order), scales = "free_y", 
+                 ncol = if(length(unique(r_hourly()$var)) <= 3){1} else {2}
+      ) +
+      labs(#title = "Snotel - Hourly Data", 
+        x = NULL, 
+        y = NULL,
+        color = "Snotel Site") +
+      scale_x_datetime(date_breaks = "12 hour", date_labels = "%Y-%m-%d %H:%M") + 
+      theme_bw() +
+      theme_sn
+    
+  })
+  
+  #weather forecast
+  output$wfPlot <- renderPlotly({
+    r_wf() %>%
+      ggplot(aes(x = date, y = value, 
+                 group = site_name_f, 
+                 color = site_name_f)
+      ) +
+      geom_ribbon(
+        data = . %>% filter(str_detect(var, "temp") & !is.na(value)),
+        aes(ymin = if(input$units == "imperial"){min(0, min(value))} else {min(-17.8, min(value))},
+            ymax = if(input$units == "imperial"){5} else {-15}),
+        fill = "steelblue", color = NA,
+        alpha = 0.2,
+        show.legend = F
+      ) +
+      geom_ribbon(
+        data = . %>% filter(str_detect(var, "temp") & !is.na(value)),
+        aes(ymin = if(input$units == "imperial"){32} else {0}, 
+            ymax = if(input$units == "imperial"){max(40, max(value))} else {max(4.5, max(value))}),
+        fill = "red", color = NA,
+        alpha = 0.2,
+        show.legend = F
+      ) +
+      geom_vline(xintercept = as.numeric(floor_date(Sys.time(), "hour")), color = "gold") +
+      geom_text(
+        aes(x = floor_date(Sys.time(), "hour"),
+            y = max(value, na.rm = TRUE), # Find max y value for each facet
+            label = paste0(format(Sys.time(), "%Y-%m-%d %H:"), "00", "  now")),  # Format date and time
+        inherit.aes = FALSE,
+        color = "gold",
+        size = 2.5,
+        hjust = -0.5, 
+        vjust = 1.1  
+      ) +
+      geom_line() +
+      scale_color_manual(values = colors_sites) +
+      scale_y_continuous(breaks = function(x) unique(floor(pretty_breaks(n = 10)(x)))) +
+      facet_wrap(~var_units, scales = "free_y", ncol = if(length(input$wf_var) <= 3){1} else {2}) +
+      labs(#title = "Weather Data - Hourly", 
+        x = NULL, y = NULL) +
+      theme_bw() +
+      scale_x_datetime(date_breaks = "12 hour", date_labels = "%Y-%m-%d %H:%M") + 
+      theme_sn
+    
+  })
+  
+  
   #windrose
   output$windrose <- renderPlot({
     
@@ -457,222 +627,96 @@ server <- function(input, output, session) {
     
     gd0 <- wf %>%
       left_join(bbs_meta %>% 
-                  select(site_id, site_name, site_label, site_ac, site_order)) %>% 
+                  select(site_id, site_name, site_name_f, site_label, site_ac, site_order)) %>% 
       filter(site_label %in% input$site_label) %>%
       arrange(site_order, site_name)
     
     gd1 <- gd0 %>%
       filter(date < Sys.time() & date >= Sys.time() - hours(72))
-
-
+    
+    
     gd2 <- gd0 %>%
       filter(date >= Sys.time() & date >= Sys.time() + hours(24))
     
     g1 <- ggwindrose(speed = gd1$wind_speed, direction = gd1$wind_direction, facet = gd1$site_name, ncol = 2,
                      speed_cuts = speed_cuts, 
                      legend_title = if(input$units == "imperial"){"Wind Speed (mph)"} else {"Wind Speed (kmh)"}
-                     ) +
+    ) +
       labs(title = "Wind Direction - Previous 72 hours",
            subtitle = str_c(min(gd1$date), " to ", max(gd1$date))) +
       theme_linedraw() +
-      theme_sn 
+      theme_sn +
+      theme(title = element_text(color = "darkred"))
+    
     
     g2 <- ggwindrose(speed = gd2$wind_speed, direction = gd2$wind_direction, facet = gd2$site_name,  ncol = 2,
                      speed_cuts = speed_cuts, 
                      legend_title = if(input$units == "imperial"){"Wind Speed (mph)"} else {"Wind Speed (kmh)"}
-                     ) +
+    ) +
       labs(title = "Wind Direction - Next 24 hours",
            subtitle = str_c(min(gd2$date), " to ", max(gd2$date))) +
       theme_linedraw() +
       theme_sn +
-      theme(title = element_text(color = "darkgray"))
+      theme(title = element_text(color = "darkgreen"))
     
-
+    
     g1 + g2
     
   })
   
   
-  # Daily plot
-  output$dailyPlot <- renderPlot({
-
-    r_daily() %>%
-      ggplot(aes(x = date, y = value, 
-                 group = reorder(site_label, site_order),
-                 linetype = reorder(site_label, site_order),
-                 alpha = reorder(site_label, site_order)
+  
+  
+  output$seasonsPlot <- renderPlotly({
+    
+    r_seasons() %>% 
+      filter(var != "temperature_mean") %>%
+      ggplot(aes(x = reorder(month_day, date_order), y = value,
+                 #group = reorder(site_label, site_order),
+                 #color = reorder(site_label, site_order)
+                 group = interaction(site_name_f, season),
+                 color = site_name_f,
+                 linetype = reorder(season, desc(season)),
+                 alpha = reorder(season, desc(season))
+                 
+                 #alpha = season
       )) +
-      geom_line(
-        data = . %>% filter(str_detect(var, "lag")) %>% 
-          mutate(temp_line = 0), 
-        aes(y = temp_line, group = 1),
-        color = "gold",
-        alpha = 1,
-        linetype = "dashed"
+      geom_vline(xintercept = which(str_detect(dates_month_day$month_day, "12-31")), color = "gold3") +
+      geom_text(
+        aes(x = "01-01",
+            y = max(value, na.rm = TRUE),
+            label = "New Year"),  # Format date and time
+        inherit.aes = FALSE,
+        color = "gold3",
+        hjust = -0.5, # Adjust horizontal position
+        vjust = 1.1  # Adjust vertical position
       ) +
-      geom_line(
-        data = . %>% filter(str_detect(var, "temperature_min")) %>%
-          mutate(temp_line = ifelse(input$units == "imperial", 0, -17.8)),
-        aes(y = temp_line, group = 1),
-        color = "steelblue",
-        alpha = 1,
-        linetype = "dashed"
-      ) +
-      geom_ribbon(
-        data = . %>% filter(str_detect(var, "temperature_max")),
-        aes(ymin = if(input$units == "imperial"){32} else {0}, ymax = if(input$units == "imperial"){40} else {4.5}),
-        fill = "red", color = NA,
-        alpha = 0.2,
-        show.legend = F
-      ) +
-      geom_line(linewidth = 1) +
-      geom_labelline(aes(label = site_name), linewidth = 1, size = 3.5, hjust = 0.9, show.legend = F) +
+      geom_line() +
+      scale_color_manual(values = colors_sites) +
+      scale_alpha_manual(values = c(1, rep(0.6, 20))) +
       # geom_text(data = . %>% filter(!is.na(date)) %>% filter(date == max(date), .by = var),
-      #           aes(label = site_ac), hjust = 0.5, vjust = -0.5) +
-      scale_alpha_manual(values = c(1, 0.7, 0.5, 0.3, rep(0.3, 10))) +
-      geom_label_repel(data = .  %>% filter(flag_temp != 0 & !str_detect(var, "min|mean")),
-                       aes(color = as.character(flag_temp), label = label_temp_flag), 
-                       shape = 21, size = 4, nudge_y = -0.5, show.legend = F) +
-      scale_color_manual(values = c("orange", "orangered", "red")) + 
-      new_scale_color() +
-      geom_label(data = .  %>% filter(flag_snow_change != 0),
-                 aes(color = as.character(flag_snow_change), label = label_snow_change), 
-                 shape = 21, size = 4, nudge_y = 0.5, show.legend = F) +
-      scale_color_manual(values = c("skyblue1", "blue")) +
+      #           aes(y = value * 1.005, label = site_ac) 
+      #           #hjust = 0.5, vjust = 0.5
+      # ) +
       scale_y_continuous(breaks = function(x) unique(floor(pretty_breaks(n = 10)(x)))) +
       facet_wrap(~reorder(var_units, var_order), scales = "free_y", 
                  ncol = if(length(unique(r_daily()$var)) <= 3){1} else {2}
-                 ) +
+      ) +
       guides(alpha = "none") +
-      labs(title = "Snotel - Daily Data", 
-           subtitle = "Storm labels: Dark blue = big storm; Light blue = med/small storm\nTemp labels: Reds = High temps (max daily)",
-           x = NULL, 
-           y = NULL,
-           linetype = "Snotel Site") +
-      scale_x_date(date_breaks = "1 day", # Show every day
-                   date_labels = "%Y-%m-%d") + 
-      theme_linedraw() +
+      labs(#title = "Snotel - Daily Data", 
+        #subtitle = "Storm labels: Dark blue = big storm; Light blue = med/small storm\nTemp labels: Reds = High temps (max daily)",
+        x = NULL, 
+        y = NULL,
+        color = "Snotel Site",
+        linetype = "Snow Season") +
+      # scale_x_date(date_breaks = "1 day", # Show every day
+      #              date_labels = "%Y-%m-%d") +
+      scale_x_discrete(breaks = function(x) dates_month_day$month_day[seq(1, length(dates_month_day$month_day), by = 14)]) +
+      theme_bw() +
       theme_sn
     
   })
   
-  # Hourly plot
-  output$hourlyPlot <- renderPlot({
-    r_hourly() %>%
-      ggplot(aes(x = date, y = value, 
-                 group = reorder(site_label, site_order),
-                 linetype = reorder(site_label, site_order),
-                 alpha = reorder(site_label, site_order)
-      )) +
-      geom_line(
-        data = . %>% filter(str_detect(var, "lag")) %>% 
-          mutate(temp_line = 0), 
-        aes(y = temp_line, group = 1),
-        color = "gold",
-        alpha = 1,
-        linetype = "dashed"
-      ) +
-      geom_line(
-        data = . %>% filter(str_detect(var, "temperature_min")) %>%
-          mutate(temp_line = ifelse(input$units == "imperial", 0, -17.8)),
-        aes(y = temp_line, group = 1),
-        color = "steelblue",
-        alpha = 1,
-        linetype = "dashed"
-      ) +
-      geom_ribbon(
-        data = . %>% filter(str_detect(var, "temperature_max")),
-        aes(ymin = if(input$units == "imperial"){32} else {0}, ymax = if(input$units == "imperial"){40} else {4.5}),
-        fill = "red", color = NA,
-        alpha = 0.2,
-        show.legend = F
-      ) +
-      geom_line(linewidth = 1) +
-      #geom_smooth(se = F, size = 0.8, show.legend = F) +
-      scale_alpha_manual(values = c(1, 0.7, 0.5, 0.3, rep(0.3, 10))) +
-      geom_label_repel(data = .  %>% 
-                         filter(!str_detect(var, "min|mean")) %>%
-                         group_by(site_id, var) %>%
-                         arrange(date) %>%
-                         mutate(row = row_number()) %>%
-                         mutate(label_group = ifelse(flag_temp != 0 & lag(flag_temp) == 0, row, NA)) %>% 
-                         fill(label_group, .direction = "down") %>%
-                         ungroup() %>%
-                         
-                         group_by(site_id, var, label_group) %>%
-                         #slice(1, n()) %>% # Keep only the first row within each group
-                         filter(row_number() == 1 | label_temp_flag == max(label_temp_flag)) %>%
-                         ungroup() %>%
-                         filter(flag_temp != 0)
-                       
-                         
-                         ,
-                       aes(color = as.character(flag_temp), label = label_temp_flag), 
-                       shape = 21, size = 4, nudge_y = -0.5, show.legend = F) +
-      scale_color_manual(values = c("orange", "orangered", "red")) + 
-      new_scale_color() +
-      geom_label(data = .  %>% filter(flag_snow_change != 0),
-                 aes(color = as.character(flag_snow_change), label = label_snow_change), 
-                 shape = 21, size = 4, nudge_y = 0.5, show.legend = F) +
-      scale_color_manual(values = c("skyblue1", "blue")) +
-      scale_y_continuous(breaks = function(x) unique(floor(pretty_breaks(n = 10)(x)))) +
-      facet_wrap(~reorder(var_units, var_order), scales = "free_y", 
-                 ncol = if(length(unique(r_hourly()$var)) <= 3){1} else {2}) +
-      guides(alpha = "none") +
-      labs(title = "Snotel - Hourly Data", 
-           subtitle = "Storm labels: Dark blue = big storm; Light blue = med/small storm\nTemp labels: Reds = High temps",
-           x = NULL, y = NULL, 
-           linetype = "Snotel Site") +
-      theme_linedraw() +
-      scale_x_datetime(date_breaks = "6 hour", date_labels = "%Y-%m-%d %H:%M") + #Every 6 hours
-      theme_sn
-    
-  })
-  
-  #weather forecast
-  output$wfPlot <- renderPlot({
-    r_wf() %>%
-      ggplot(aes(x = date, y = value, 
-                 group = interaction(hf, reorder(site_label, site_order)), 
-                 linetype = reorder(site_label, site_order),
-                 color = hf)
-      ) +
-      geom_line(
-        data = . %>% filter(str_detect(var, "temp")) %>%
-          mutate(temp_line = ifelse(input$units == "imperial", 0, -17.8)),
-        aes(y = temp_line, group = 1),
-        color = "steelblue",
-        alpha = 1,
-        linetype = "dashed"
-      ) +
-      geom_ribbon(
-        data = . %>% filter(str_detect(var, "temp")),
-        aes(ymin = if(input$units == "imperial"){32} else {0}, ymax = if(input$units == "imperial"){40} else {4.5}),
-        fill = "red", color = NA,
-        alpha = 0.2,
-        show.legend = F
-      ) +
-      
-      geom_vline(xintercept = Sys.time(), color = "purple", linewidth = 1) +
-      geom_text(
-        data = r_wf() %>% group_by(var) %>% summarize(max_y = 0.9*max(value, na.rm = TRUE)),
-        aes(x = Sys.time(), y = max_y, label = "now"),
-        inherit.aes = FALSE,
-        color = "purple",
-        vjust = -0.5
-      ) +     
-      geom_line(linewidth = 1) +
-      scale_color_manual(values = c("darkgray", "black"))+
-      scale_y_continuous(breaks = function(x) unique(floor(pretty_breaks(n = 10)(x)))) +
-      facet_wrap(~var_units, scales = "free_y", ncol = if(length(input$wf_var) <= 3){1} else {2}) +
-      labs(title = "Weather Data - Hourly", x = NULL, y = NULL,
-           color = "Historical or Forecast",
-           linetype = "Site Name") +
-      theme_linedraw() +
-      scale_x_datetime(date_breaks = "6 hour", date_labels = "%Y-%m-%d %H:%M") + 
-      theme_sn
-    
-  })
   
   
   # Map of Idaho
@@ -692,7 +736,7 @@ server <- function(input, output, session) {
                           label = paste(str_to_title(site_name), "(", elev_ft, "ft)")),
                       size = 3.5,
                       show.legend = F) +
-      scale_color_manual(values = c("blue", "snow")) +
+      scale_color_manual(values = c("blue", "gray90")) +
       scale_shape_manual(values = c(17, 19)) +
       #scale_size_continuous(limits = c(1.5, 3.5)) +
       coord_quickmap(xlim = range(c(oregon_boundary$long, idaho_boundary$long)), 
@@ -712,4 +756,5 @@ server <- function(input, output, session) {
 }
 
 #app ####
-shinyApp(ui, server)
+shinyApp(ui = ui, server = server)
+

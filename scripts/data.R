@@ -25,6 +25,9 @@ bbs_names = c(
   , "trinity mtn"
   , "secesh summit"
   , "south mtn"
+  , "magic mountain"
+  , "bostetter rs"
+  , "howell canyon"
 )
 
 #additional weather locations
@@ -166,7 +169,7 @@ wf <- wf_raw %>%
   rename_with(~ str_replace_all(., "hourly_|_10m|_2m", "")) %>%
   group_by(site_name) %>%
   arrange(site_name, date) %>%
-  mutate(snowfall_rolling_6h_sum = rollsum(snowfall, k = 6, align = "right", fill = NA)) %>%
+  mutate(snowfall_rolling_12h_sum = rollsum(snowfall, k = 12, align = "right", fill = NA)) %>%
   ungroup()
 
 
